@@ -23,6 +23,7 @@ timezone="Etc/UTC"
 hexStakePool=""
 jsonPoolTool="/usr/local/etc/pooltool.json"
 slotsCsvFile="/var/local/cncli/slots.csv"
+leaderPromFile="/var/lib/prometheus/node-exporter/leaderlog.prom"
 mailLeaderLogTo=""
 vrfSigningKeyFile="/etc/cardano/mainnet/keys/vrf.skey"
 shelleyGenesisFile="/etc/cardano/mainnet/shelley-genesis.json"
@@ -120,7 +121,8 @@ writeLeaderSlots ()
     if [[ "${slotsCsvFile}" != "" && -w `dirname "${slotsCsvFile}"` && `jq -r '.status' <<< "$(cat /tmp/leaderlog)"` == "ok" ]];
     then
         echo -n "Writing leaderlog to ${slotsCsvFile}... "
-        cat /tmp/leaderlog | jq -r '.assignedSlots[] | (.at|tostring) + "," + (.slot|tostring) + "," + (.no|tostring)' > $slotsCsvFile
+        cat /tmp/leaderlog | jq -r '.assignedSlots[] | (.at|strptime("%Y-%m-%dT%H:%M:%S%z")|strftime("%Y-%m-%d %T")) + "," + (.slot|tostring) + "," + (.no|tostring)' > $slotsCsvFile
+        sed -i '1i Time,Slot,No' $slotsCsvFile
         if [[ $? -eq 0 ]]; then echo "done"; else echo "failed!"; fi
     else
         echo "Not writing slots.csv"
@@ -129,6 +131,20 @@ writeLeaderSlots ()
 
 # Run within 10 minutes of epoch start
 if [[ $dayOfEpoch -eq 0 && $secondsLeftInEpoch -lt 432000 && $secondsLeftInEpoch -gt 431400 ]];
+writeLeaderProm ()
+{
+    if [[ "${leaderPromFile}" != "" && -w `dirname "${leaderPromFile}"` && `jq -r '.status' <<< "$(cat /tmp/leaderlog)"` == "ok" ]];
+    then
+        echo -n "Writing leaderlog prom data to ${leaderPromFile}... "
+        printf "assigned_blocks_epoch %d\n" `cat /tmp/leaderlog | jq -r '.epochSlots'` > $leaderPromFile
+        if [[ $? -eq 0 ]]; then echo "done"; else echo "failed!"; fi
+    else
+        echo "Not writing leaderlog.prom"
+    fi
+}
+
+# Run within 10 minutes of epoch start
+if [[ $dayOfEpoch -eq 1 ]];
 then
     calculateLeaderLog prev $(($currentEpoch-1)) stakeGo
     calculateLeaderLog current $currentEpoch stakeSet
@@ -136,7 +152,7 @@ then
 fi
 
 # Run as soon as the leaderlog is available
-if [[ $dayOfEpoch -eq 4 && $secondsLeftInEpoch -le 129600 && $secondsLeftInEpoch -gt 129000 ]];
+if [[ $dayOfEpoch -eq 4 && $secondsLeftInEpoch -le 129600 && $secondsLeftInEpoch -gt 84600 || -n $1 ]];
 then
     calculateLeaderLog next $(($currentEpoch+1)) stakeMark
     mailLeaderLog next $(($currentEpoch+1))
